@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#000008">
+  <title>StarBrain Galaxy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000008; }
+    canvas { display: block; }
+
+    /* ── HUD Overlay ─────────────────────────────────────────── */
+    #hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+      font-family: 'Nunito', system-ui, sans-serif;
+      color: #E0E8FF;
+    }
+
+    #hud-title {
+      position: absolute;
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: 'Fredoka One', cursive;
+      font-size: clamp(20px, 4vw, 36px);
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 20px rgba(100, 150, 255, 0.6), 0 0 60px rgba(80, 120, 255, 0.3);
+      opacity: 0;
+      transition: opacity 0.6s ease;
+    }
+    #hud-title.visible { opacity: 1; }
+
+    #hud-subtitle {
+      position: absolute;
+      top: 68px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: clamp(12px, 2vw, 18px);
+      font-weight: 700;
+      color: #8899CC;
+      opacity: 0;
+      transition: opacity 0.6s ease 0.2s;
+    }
+    #hud-subtitle.visible { opacity: 1; }
+
+    #btn-back {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      pointer-events: auto;
+      background: rgba(255,255,255,0.08);
+      border: 2px solid rgba(255,255,255,0.2);
+      color: #C0D0FF;
+      font-family: 'Nunito', sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      padding: 10px 20px;
+      border-radius: 30px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.4s ease, background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #btn-back:hover { background: rgba(255,255,255,0.15); }
+    #btn-back.visible { opacity: 1; }
+
+    /* Planet info panel */
+    #planet-info {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      pointer-events: auto;
+      background: rgba(10, 15, 40, 0.85);
+      border: 2px solid rgba(100, 150, 255, 0.3);
+      border-radius: 20px;
+      padding: 24px 36px;
+      text-align: center;
+      min-width: 280px;
+      opacity: 0;
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      transform: translateX(-50%) translateY(20px);
+      backdrop-filter: blur(10px);
+    }
+    #planet-info.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    #planet-info h2 {
+      font-family: 'Fredoka One', cursive;
+      font-size: 28px;
+      margin-bottom: 8px;
+      text-shadow: 0 0 12px currentColor;
+    }
+    #planet-info p {
+      font-size: 15px;
+      color: #8899CC;
+      margin-bottom: 16px;
+    }
+    #planet-info button {
+      pointer-events: auto;
+      background: linear-gradient(135deg, #FFD700, #F59E0B);
+      color: #1A1000;
+      border: none;
+      font-family: 'Fredoka One', cursive;
+      font-size: 18px;
+      padding: 12px 32px;
+      border-radius: 30px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      box-shadow: 0 4px 20px rgba(255, 215, 0, 0.4);
+    }
+    #planet-info button:hover {
+      transform: scale(1.05);
+      box-shadow: 0 6px 28px rgba(255, 215, 0, 0.6);
+    }
+
+    /* Labels that float near objects */
+    .system-label {
+      position: absolute;
+      pointer-events: auto;
+      cursor: pointer;
+      font-family: 'Nunito', sans-serif;
+      font-weight: 800;
+      font-size: 14px;
+      color: #C0D0FF;
+      text-shadow: 0 0 10px rgba(100, 150, 255, 0.5);
+      padding: 4px 12px;
+      border-radius: 12px;
+      background: rgba(10, 15, 40, 0.5);
+      border: 1px solid rgba(100, 150, 255, 0.2);
+      white-space: nowrap;
+      transition: background 0.2s, transform 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .system-label:hover {
+      background: rgba(30, 50, 100, 0.7);
+      transform: scale(1.08);
+    }
+
+    /* Loading screen */
+    #loading {
+      position: fixed;
+      inset: 0;
+      background: #000008;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      transition: opacity 0.8s ease;
+    }
+    #loading.done { opacity: 0; pointer-events: none; }
+    #loading h1 {
+      font-family: 'Fredoka One', cursive;
+      font-size: 36px;
+      color: #FFD700;
+      text-shadow: 0 0 30px rgba(255, 215, 0, 0.5);
+      margin-bottom: 20px;
+    }
+    #loading .loader {
+      width: 200px;
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #loading .loader-bar {
+      height: 100%;
+      width: 40%;
+      background: #FFD700;
+      border-radius: 2px;
+      animation: load-slide 1.2s ease-in-out infinite;
+    }
+    @keyframes load-slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">
+    <h1>StarBrain Galaxy</h1>
+    <div class="loader"><div class="loader-bar"></div></div>
+  </div>
+  <div id="hud">
+    <div id="hud-title">StarBrain Galaxy</div>
+    <div id="hud-subtitle">Click a star system to explore</div>
+    <button id="btn-back">◀ Back</button>
+    <div id="planet-info">
+      <h2 id="planet-name">Planet Name</h2>
+      <p id="planet-desc">Description</p>
+      <button id="planet-enter">Enter Planet</button>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
