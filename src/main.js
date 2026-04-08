@@ -4,6 +4,10 @@ import { createStarfield, createNebula } from './Starfield.js';
 import { createPlanet } from './Planet.js';
 import { createCameraController } from './CameraController.js';
 import { createSystemMarker, createSystemScene } from './StarSystem.js';
+import { createTerrain } from './Terrain.js';
+import { createAtmosphericEntry } from './AtmosphericEntry.js';
+import { createSurfaceExplorer } from './SurfaceExplorer.js';
+import { createDiscoveryLog, showDiscoveryToast } from './DiscoveryLog.js';
 
 // ── Renderer ──────────────────────────────────────────────────────────────────
 
@@ -31,6 +35,39 @@ const nebula    = createNebula(scene);
 // ── Camera controller ─────────────────────────────────────────────────────────
 
 const cameraController = createCameraController(camera);
+
+// ── Surface exploration modules ──────────────────────────────────────────
+const atmosphericEntry = createAtmosphericEntry(camera, scene);
+const surfaceExplorer = createSurfaceExplorer(camera, renderer);
+const discoveryLog = createDiscoveryLog();
+document.body.appendChild(discoveryLog.getElement());
+
+// Discovery log button in HUD
+const btnLog = document.createElement('button');
+btnLog.id = 'btn-log';
+btnLog.textContent = '📡 Log (0)';
+btnLog.style.cssText = 'position:fixed;top:24px;right:24px;pointer-events:auto;background:rgba(255,255,255,0.08);border:2px solid rgba(100,150,255,0.3);color:#C0D0FF;font-family:Nunito,sans-serif;font-size:14px;font-weight:800;padding:10px 16px;border-radius:30px;cursor:pointer;z-index:10;display:none;transition:opacity 0.4s;-webkit-tap-highlight-color:transparent;';
+btnLog.addEventListener('click', () => discoveryLog.show());
+document.body.appendChild(btnLog);
+
+// Pre-generate terrain for each system (seeded by index)
+const terrainObjects = {};
+SYSTEMS.forEach((sys, i) => {
+  const terrain = createTerrain(sys.planet, i * 1337 + 42);
+  terrain.visible = false;
+  scene.add(terrain);
+  terrainObjects[sys.id] = terrain;
+});
+
+// Track surface exploration state
+let surfaceActive = false;
+
+surfaceExplorer.onDiscover((poi) => {
+  const sys = systemObjects[activeSystemId]?.system;
+  discoveryLog.addDiscovery(activeSystemId, { ...poi, planetName: sys?.name });
+  showDiscoveryToast(poi, sys?.name || 'Unknown');
+  btnLog.textContent = `📡 Log (${discoveryLog.getCount()})`;
+});
 
 // ── System objects — built once, shown/hidden per view ────────────────────────
 
@@ -298,10 +335,67 @@ btnBack.addEventListener('click', () => {
 
 // ── Planet enter button ───────────────────────────────────────────────────────
 
-planetEnter.addEventListener('click', () => {
-  if (!activeSystemId) return;
-  console.log('Enter:', activeSystemId);
+planetEnter.addEventListener('click', async () => {
+  if (!activeSystemId || transitioning || surfaceActive) return;
+  transitioning = true;
+
+  const terrain = terrainObjects[activeSystemId];
+  const planetWorldPos = new THREE.Vector3();
+  systemObjects[activeSystemId].planet.getWorldPosition(planetWorldPos);
+
+  // Hide the orbital planet + system scene
+  systemObjects[activeSystemId].planet.visible = false;
+  systemObjects[activeSystemId].systemScene.visible = false;
+
+  // Position terrain at planet location and show it (atmospheric entry will reveal it)
+  terrain.position.copy(planetWorldPos);
+  terrain.visible = true;
+
+  // Hide planet info panel, show log button
+  setHUD({ title: false, subtitle: false, back: false, info: false });
+  btnLog.style.display = 'block';
+
+  // Cinematic atmospheric entry
+  await atmosphericEntry.enter(planetWorldPos, terrain, 3.0);
+
+  // Enter surface exploration mode
+  surfaceExplorer.enter(terrain);
+  surfaceActive = true;
+  currentView = 'surface';
+
+  // Show back button for surface
+  setHUD({ title: systemObjects[activeSystemId].system.name, back: true });
+
+  transitioning = false;
 });
+
+// Override back button to handle surface exit
+const origBackHandler = btnBack.onclick;
+btnBack.addEventListener('click', async (e) => {
+  if (!surfaceActive || transitioning) return;
+  e.stopPropagation();
+  transitioning = true;
+
+  surfaceExplorer.exit();
+  surfaceActive = false;
+  btnLog.style.display = 'none';
+
+  const terrain = terrainObjects[activeSystemId];
+  const planetWorldPos = new THREE.Vector3();
+  terrain.getWorldPosition(planetWorldPos);
+
+  // Atmospheric exit
+  await atmosphericEntry.exit(planetWorldPos, 2.5);
+
+  // Hide terrain, restore orbital planet + system
+  terrain.visible = false;
+  systemObjects[activeSystemId].planet.visible = true;
+  systemObjects[activeSystemId].systemScene.visible = true;
+
+  // Return to planet view
+  enterPlanetView(activeSystemId);
+  transitioning = false;
+}, true); // capture phase to intercept before the regular back handler
 
 // ── Raycaster + click detection ───────────────────────────────────────────────
 
@@ -444,6 +538,18 @@ function animate() {
     // Animate markers in galaxy view
     if (currentView === VIEW.GALAXY && obj.marker.visible && obj.marker.update) {
       obj.marker.update(time, delta);
+    }
+  }
+
+  // Surface explorer camera + scanning
+  if (surfaceActive) {
+    surfaceExplorer.update(time, delta);
+  }
+
+  // Update visible terrain
+  for (const [id, terrain] of Object.entries(terrainObjects)) {
+    if (terrain.visible && terrain.userData?.update) {
+      terrain.userData.update(time);
     }
   }
 

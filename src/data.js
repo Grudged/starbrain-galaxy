@@ -118,5 +118,6 @@ export const SYSTEMS = [
 export const VIEW = {
   GALAXY: 'galaxy',
   SYSTEM: 'system',
-  PLANET: 'planet'
+  PLANET: 'planet',
+  SURFACE: 'surface'
 };
