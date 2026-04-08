@@ -50,14 +50,19 @@ btnLog.style.cssText = 'position:fixed;top:24px;right:24px;pointer-events:auto;b
 btnLog.addEventListener('click', () => discoveryLog.show());
 document.body.appendChild(btnLog);
 
-// Pre-generate terrain for each system (seeded by index)
+// Terrain is generated lazily on first visit (heavy CPU work)
 const terrainObjects = {};
-SYSTEMS.forEach((sys, i) => {
-  const terrain = createTerrain(sys.planet, i * 1337 + 42);
-  terrain.visible = false;
-  scene.add(terrain);
-  terrainObjects[sys.id] = terrain;
-});
+function getOrCreateTerrain(systemId) {
+  if (!terrainObjects[systemId]) {
+    const idx = SYSTEMS.findIndex(s => s.id === systemId);
+    const sys = SYSTEMS[idx];
+    const terrain = createTerrain(sys.planet, idx * 1337 + 42);
+    terrain.visible = false;
+    scene.add(terrain);
+    terrainObjects[systemId] = terrain;
+  }
+  return terrainObjects[systemId];
+}
 
 // Track surface exploration state
 let surfaceActive = false;
@@ -82,23 +87,37 @@ surfaceExplorer.onDiscover((poi) => {
 const systemObjects = {};
 
 for (const system of SYSTEMS) {
-  const marker      = createSystemMarker(system, scene);
-  const planet      = createPlanet(system.planet, scene);
-  const systemScene = createSystemScene(system, scene);
+  const markerObj      = createSystemMarker(system);
+  const planet         = createPlanet(system.planet);
+  const systemSceneObj = createSystemScene(system, planet);
+
+  const marker      = markerObj.group;
+  const systemScene = systemSceneObj.group;
+
+  // Add to scene
+  scene.add(marker);
+  scene.add(systemScene);
 
   // Tag the marker for raycasting
   marker.traverse((obj) => {
-    if (obj.isMesh || obj.isPoints) {
+    if (obj.isMesh || obj.isSprite || obj.isPoints) {
       obj.userData.systemId = system.id;
     }
   });
-  // Also tag the root in case it's a Mesh itself
   marker.userData.systemId = system.id;
 
   // System scene is hidden until we enter it
   systemScene.visible = false;
 
-  systemObjects[system.id] = { system, marker, planet, systemScene };
+  systemObjects[system.id] = {
+    system,
+    marker,
+    markerUpdate: markerObj.update,
+    planet,
+    systemScene,
+    systemSceneUpdate: systemSceneObj.update,
+    getPlanetWorldPos: systemSceneObj.getPlanetWorldPos,
+  };
 }
 
 // Track active system and planet mesh for click testing
@@ -109,7 +128,7 @@ function getMarkerMeshes() {
   const meshes = [];
   for (const { marker } of Object.values(systemObjects)) {
     marker.traverse((obj) => {
-      if (obj.isMesh || obj.isPoints) meshes.push(obj);
+      if (obj.isMesh || obj.isSprite || obj.isPoints) meshes.push(obj);
     });
   }
   return meshes;
@@ -272,9 +291,10 @@ async function goToPlanet(systemId) {
   enterPlanetView(systemId);
 
   // Get world position of the planet mesh
-  const { planet } = systemObjects[systemId];
-  const planetWorldPos = new THREE.Vector3();
-  planet.getWorldPosition(planetWorldPos);
+  const obj = systemObjects[systemId];
+  const planetWorldPos = obj.getPlanetWorldPos
+    ? obj.getPlanetWorldPos()
+    : (() => { const v = new THREE.Vector3(); obj.planet.getWorldPosition(v); return v; })();
 
   await cameraController.flyToPlanet(planetWorldPos);
 
@@ -339,7 +359,7 @@ planetEnter.addEventListener('click', async () => {
   if (!activeSystemId || transitioning || surfaceActive) return;
   transitioning = true;
 
-  const terrain = terrainObjects[activeSystemId];
+  const terrain = getOrCreateTerrain(activeSystemId);
   const planetWorldPos = new THREE.Vector3();
   systemObjects[activeSystemId].planet.getWorldPosition(planetWorldPos);
 
@@ -380,7 +400,7 @@ btnBack.addEventListener('click', async (e) => {
   surfaceActive = false;
   btnLog.style.display = 'none';
 
-  const terrain = terrainObjects[activeSystemId];
+  const terrain = getOrCreateTerrain(activeSystemId);
   const planetWorldPos = new THREE.Vector3();
   terrain.getWorldPosition(planetWorldPos);
 
@@ -528,16 +548,16 @@ function animate() {
 
   // Animate visible system scenes
   for (const [id, obj] of Object.entries(systemObjects)) {
-    if (obj.systemScene.visible && obj.systemScene.update) {
-      obj.systemScene.update(time, delta);
+    if (obj.systemScene.visible && obj.systemSceneUpdate) {
+      obj.systemSceneUpdate(time, delta);
     }
     // Animate planets when in system or planet view
-    if (obj.planet.visible && obj.planet.update) {
-      obj.planet.update(time, delta);
+    if (obj.planet.visible && obj.planet.userData?.update) {
+      obj.planet.userData.update(time);
     }
     // Animate markers in galaxy view
-    if (currentView === VIEW.GALAXY && obj.marker.visible && obj.marker.update) {
-      obj.marker.update(time, delta);
+    if (currentView === VIEW.GALAXY && obj.marker.visible && obj.markerUpdate) {
+      obj.markerUpdate(time);
     }
   }
 
